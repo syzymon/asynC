@@ -14,32 +14,32 @@ void execute_runnable(void *arg) {
 
 #define P(mutex_ptr) \
     if ((err = pthread_mutex_lock(mutex_ptr)) != 0) \
-        syserr (err, "lock failed"); \
+        syserr (err, "lock failed") \
 
 #define V(mutex_ptr) \
     if ((err = pthread_mutex_unlock(mutex_ptr)) != 0) \
-        syserr (err, "unlock failed"); \
+        syserr (err, "unlock failed") \
 
 #define WAIT(cond_ptr, mutex_ptr) \
     if ((err = pthread_cond_wait(cond_ptr, mutex_ptr)) != 0) \
-        syserr (err, "wait failed"); \
+        syserr (err, "wait failed") \
 
 #define SIGNAL(cond_ptr) \
     if ((err = pthread_cond_signal(cond_ptr)) != 0) \
-        syserr (err, "wait failed"); \
+        syserr (err, "wait failed") \
 
 
 void *thread_worker(void *data) {
     int err = 0;
     thread_pool_t *t = data;
-    bool active = true;
+    bool active_or_tasks_pending = true;
     do {
         P(&t->mutex);
 
-        while (queue_empty(t->task_queue_ptr) && active == true)
+        while (queue_empty(t->task_queue_ptr) && t->active == true)
             WAIT(&t->wait_for_job, &t->mutex);
 
-        if(queue_empty(t->task_queue_ptr) && active == false) {
+        if(queue_empty(t->task_queue_ptr) && t->active == false) {
             V(&t->mutex);
             break;
         }
@@ -55,12 +55,12 @@ void *thread_worker(void *data) {
         free(job);
 
         P(&t->mutex);
-        active = t->active;
-        if(queue_empty(t->task_queue_ptr) && active == false)
+        active_or_tasks_pending = t->active || !queue_empty(t->task_queue_ptr);
+        if(!active_or_tasks_pending)
             if((err = pthread_cond_broadcast(&t->wait_for_job)) != 0)
                 syserr(err, "broadcast failed");
         V(&t->mutex);
-    } while (active);
+    } while (active_or_tasks_pending);
     return (void *) 0;
 }
 
@@ -71,7 +71,6 @@ void set_sigint_handler() {
 static pthread_once_t sigint_initialized = PTHREAD_ONCE_INIT;
 
 int thread_pool_init(thread_pool_t *pool, size_t num_threads) {
-    // pool - alloc'd and freed by user
     int err = 0;
 
     if ((err = pthread_once(&sigint_initialized, set_sigint_handler)) != 0)
@@ -86,8 +85,9 @@ int thread_pool_init(thread_pool_t *pool, size_t num_threads) {
         syserr(err, "cond init error");
     }
 
-    if ((err = queue_init(pool->task_queue_ptr)) != 0)
-        return err;
+    pool->task_queue_ptr = malloc(sizeof(queue_t));
+    if(pool->task_queue_ptr == NULL) return -1;
+    queue_init(pool->task_queue_ptr);
 
     pool->threads = malloc(num_threads * sizeof(pthread_t));
     if (pool->threads == NULL) return -1;
@@ -116,11 +116,24 @@ void thread_pool_destroy(struct thread_pool *pool) {
     int err = 0;
     P(&pool->mutex);
     pool->active = false;
+    if((err = pthread_cond_broadcast(&pool->wait_for_job)))
+        syserr(err, "broadcast failed");
     V(&pool->mutex);
 
-    for(size_t i = 0; i < pool->num_threads; ++i)
+    for(size_t i = 0; i < pool->num_threads; ++i) {
         if ((err = pthread_join(pool->threads[i], NULL)) != 0)
             syserr(err, "join failed");
+    }
+    // cleanup
+    free(pool->threads);
+
+    if((err = pthread_mutex_destroy(&pool->mutex)))
+        syserr(err, "mutex destroy failed");
+    if((err = pthread_cond_destroy(&pool->wait_for_job)))
+        syserr(err, "cond destroy failed");
+
+    queue_destroy(pool->task_queue_ptr);
+    free(pool->task_queue_ptr);
 }
 
 int defer(struct thread_pool *pool, runnable_t runnable) {
