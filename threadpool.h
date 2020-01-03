@@ -3,14 +3,23 @@
 
 #include <stddef.h>
 #include <pthread.h>
-#include "err.h"
-#include "queue.h"
+#include <stdbool.h>
 
 typedef struct runnable {
   void (*function)(void *, size_t);
   void *arg;
   size_t argsz;
 } runnable_t;
+
+typedef struct queue_item {
+    runnable_t to_do;
+    struct queue_item* next;
+} queue_item_t;
+
+typedef struct queue_root {
+    struct queue_item* head;
+    struct queue_item* tail;
+} queue_t;
 
 typedef struct thread_pool {
     size_t num_threads;

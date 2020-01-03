@@ -1,16 +1,8 @@
 #include "threadpool.h"
+#include "err.h"
+#include "queue.h"
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct job {
-    void *to_do;
-    void (*execute)(void *);
-} job_t;
-
-void execute_runnable(void *arg) {
-    runnable_t *to_do = arg;
-    to_do->function(to_do->arg, to_do->argsz);
-}
 
 #define P(mutex_ptr) \
     if ((err = pthread_mutex_lock(mutex_ptr)) != 0) \
@@ -32,32 +24,27 @@ void execute_runnable(void *arg) {
 void *thread_worker(void *data) {
     int err = 0;
     thread_pool_t *t = data;
-    bool active_or_tasks_pending = true;
+    bool active_or_tasks_pending;
     do {
         P(&t->mutex);
 
         while (queue_empty(t->task_queue_ptr) && t->active == true)
             WAIT(&t->wait_for_job, &t->mutex);
 
-        if(queue_empty(t->task_queue_ptr) && t->active == false) {
+        if (queue_empty(t->task_queue_ptr) && t->active == false) {
             V(&t->mutex);
             break;
         }
 
-        job_t *job = queue_poll(t->task_queue_ptr);
+        runnable_t job = queue_poll(t->task_queue_ptr);
         V(&t->mutex);
 
-        job->execute(job->to_do);
-
-        // cleanup
-        // TODO: assumption - only one-level cleanup here - future.h
-        free(job->to_do);
-        free(job);
+        job.function(job.arg, job.argsz);
 
         P(&t->mutex);
         active_or_tasks_pending = t->active || !queue_empty(t->task_queue_ptr);
-        if(!active_or_tasks_pending)
-            if((err = pthread_cond_broadcast(&t->wait_for_job)) != 0)
+        if (!active_or_tasks_pending)
+            if ((err = pthread_cond_broadcast(&t->wait_for_job)) != 0)
                 syserr(err, "broadcast failed");
         V(&t->mutex);
     } while (active_or_tasks_pending);
@@ -86,7 +73,7 @@ int thread_pool_init(thread_pool_t *pool, size_t num_threads) {
     }
 
     pool->task_queue_ptr = malloc(sizeof(queue_t));
-    if(pool->task_queue_ptr == NULL) return -1;
+    if (pool->task_queue_ptr == NULL) return -1;
     queue_init(pool->task_queue_ptr);
 
     pool->threads = malloc(num_threads * sizeof(pthread_t));
@@ -116,20 +103,20 @@ void thread_pool_destroy(struct thread_pool *pool) {
     int err = 0;
     P(&pool->mutex);
     pool->active = false;
-    if((err = pthread_cond_broadcast(&pool->wait_for_job)))
+    if ((err = pthread_cond_broadcast(&pool->wait_for_job)))
         syserr(err, "broadcast failed");
     V(&pool->mutex);
 
-    for(size_t i = 0; i < pool->num_threads; ++i) {
+    for (size_t i = 0; i < pool->num_threads; ++i) {
         if ((err = pthread_join(pool->threads[i], NULL)) != 0)
             syserr(err, "join failed");
     }
     // cleanup
     free(pool->threads);
 
-    if((err = pthread_mutex_destroy(&pool->mutex)))
+    if ((err = pthread_mutex_destroy(&pool->mutex)))
         syserr(err, "mutex destroy failed");
-    if((err = pthread_cond_destroy(&pool->wait_for_job)))
+    if ((err = pthread_cond_destroy(&pool->wait_for_job)))
         syserr(err, "cond destroy failed");
 
     queue_destroy(pool->task_queue_ptr);
@@ -140,15 +127,7 @@ int defer(struct thread_pool *pool, runnable_t runnable) {
     int err = 0;
     P(&pool->mutex);
 
-    job_t *job = malloc(sizeof(job_t));
-    if (job == NULL) return -1;
-    job->to_do = malloc(sizeof(runnable_t));
-    if (job->to_do == NULL) return -1;
-
-    memcpy(job->to_do, &runnable, sizeof(runnable_t));
-    job->execute = execute_runnable;
-
-    if ((err = queue_push(pool->task_queue_ptr, job)) != 0)
+    if ((err = queue_push(pool->task_queue_ptr, runnable)) != 0)
         return err;
 
     // TODO: order of these 2
