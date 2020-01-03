@@ -10,9 +10,14 @@ typedef struct callable {
 } callable_t;
 
 typedef struct future {
+    thread_pool_t* pool;
+    callable_t callable;
+    bool completed;
     void* result;
     size_t result_size;
-    pthread_mutex_t wait_for_result;
+    pthread_mutex_t mutex;
+    pthread_cond_t wait_for_completed;
+    struct future* next;
 } future_t;
 
 int async(thread_pool_t *pool, future_t *future, callable_t callable);

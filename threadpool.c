@@ -1,37 +1,35 @@
 #include "threadpool.h"
-#include "err.h"
 #include "queue.h"
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
+#include "defer.h"
+#include "err.h"
 
-#define P(mutex_ptr) \
-    if ((err = pthread_mutex_lock(mutex_ptr)) != 0) \
-        syserr (err, "lock failed") \
-
-#define V(mutex_ptr) \
-    if ((err = pthread_mutex_unlock(mutex_ptr)) != 0) \
-        syserr (err, "unlock failed") \
-
-#define WAIT(cond_ptr, mutex_ptr) \
-    if ((err = pthread_cond_wait(cond_ptr, mutex_ptr)) != 0) \
-        syserr (err, "wait failed") \
-
-#define SIGNAL(cond_ptr) \
-    if ((err = pthread_cond_signal(cond_ptr)) != 0) \
-        syserr (err, "wait failed") \
-
+bool active_or_tasks_pending(thread_pool_t *pool) {
+    return pool->active || !queue_empty(pool->task_queue_ptr) ||
+           pool->pending_maps > 0;
+}
 
 void *thread_worker(void *data) {
     int err = 0;
     thread_pool_t *t = data;
-    bool active_or_tasks_pending;
-    do {
-        P(&t->mutex);
+    P(&t->mutex);
+    bool active = true;
+    V(&t->mutex);
 
-        while (queue_empty(t->task_queue_ptr) && t->active == true)
+    while (active) {
+        P(&t->mutex);
+        if (!active_or_tasks_pending(t)) {
+            V(&t->mutex);
+            break;
+        }
+
+        while (queue_empty(t->task_queue_ptr) &&
+               (t->active == true || t->pending_maps > 0))
             WAIT(&t->wait_for_job, &t->mutex);
 
-        if (queue_empty(t->task_queue_ptr) && t->active == false) {
+        if (!active_or_tasks_pending(t)) {
             V(&t->mutex);
             break;
         }
@@ -42,12 +40,12 @@ void *thread_worker(void *data) {
         job.function(job.arg, job.argsz);
 
         P(&t->mutex);
-        active_or_tasks_pending = t->active || !queue_empty(t->task_queue_ptr);
-        if (!active_or_tasks_pending)
+        active = active_or_tasks_pending(t);
+        if (!active)
             if ((err = pthread_cond_broadcast(&t->wait_for_job)) != 0)
                 syserr(err, "broadcast failed");
         V(&t->mutex);
-    } while (active_or_tasks_pending);
+    }
     return (void *) 0;
 }
 
@@ -93,6 +91,7 @@ int thread_pool_init(thread_pool_t *pool, size_t num_threads) {
             syserr(err, "create failed");
     }
 
+    pool->pending_maps = 0;
     pool->num_threads = num_threads;
     pool->active = true;
     V(&pool->mutex);
@@ -112,6 +111,7 @@ void thread_pool_destroy(struct thread_pool *pool) {
             syserr(err, "join failed");
     }
     // cleanup
+    assert(pool->pending_maps == 0);
     free(pool->threads);
 
     if ((err = pthread_mutex_destroy(&pool->mutex)))
@@ -125,13 +125,13 @@ void thread_pool_destroy(struct thread_pool *pool) {
 
 int defer(struct thread_pool *pool, runnable_t runnable) {
     int err = 0;
+    CHECK_POOL();
     P(&pool->mutex);
-
-    if ((err = queue_push(pool->task_queue_ptr, runnable)) != 0)
-        return err;
-
-    // TODO: order of these 2
-    SIGNAL(&pool->wait_for_job);
+    if (!pool->active) {
+        V(&pool->mutex);
+        return -1;
+    }
+    err = _defer(pool, runnable);
     V(&pool->mutex);
     return err;
 }

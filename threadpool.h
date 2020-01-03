@@ -17,8 +17,8 @@ typedef struct queue_item {
 } queue_item_t;
 
 typedef struct queue_root {
-    struct queue_item* head;
-    struct queue_item* tail;
+    queue_item_t* head;
+    queue_item_t* tail;
 } queue_t;
 
 typedef struct thread_pool {
@@ -28,7 +28,30 @@ typedef struct thread_pool {
     pthread_cond_t wait_for_job;
     queue_t *task_queue_ptr;
     pthread_t *threads;
+    size_t pending_maps;
 } thread_pool_t;
+
+
+#define P(mutex_ptr) \
+    if ((err = pthread_mutex_lock(mutex_ptr)) != 0) \
+        syserr (err, "lock failed") \
+
+#define V(mutex_ptr) \
+    if ((err = pthread_mutex_unlock(mutex_ptr)) != 0) \
+        syserr (err, "unlock failed") \
+
+#define WAIT(cond_ptr, mutex_ptr) \
+    if ((err = pthread_cond_wait(cond_ptr, mutex_ptr)) != 0) \
+        syserr (err, "wait failed") \
+
+#define SIGNAL(cond_ptr) \
+    if ((err = pthread_cond_signal(cond_ptr)) != 0) \
+        syserr (err, "wait failed") \
+
+#define CHECK_POOL() \
+    if(pool == NULL || !pool->active) \
+        return -1
+
 
 int thread_pool_init(thread_pool_t *pool, size_t pool_size);
 
