@@ -15,8 +15,6 @@ typedef struct task {
 } task_t;
 
 
-int64_t* sums;
-
 void calculate_cell(void* arg, size_t argsz __attribute__((unused))) {
     int err = 0;
     task_t* task_ptr = arg;
@@ -37,7 +35,7 @@ int main(void) {
     size_t tasks_count = k * n;
 
     task_t* tasks = malloc(tasks_count * sizeof(task_t));
-    sums = calloc(k, sizeof(int64_t));
+    int64_t* sums = calloc(k, sizeof(int64_t));
     pthread_mutex_t* mutices = malloc(k * sizeof(pthread_mutex_t));
 
     if(tasks == NULL || sums == NULL || mutices == NULL) {
