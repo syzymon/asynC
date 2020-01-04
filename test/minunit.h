@@ -3,6 +3,8 @@
 #ifndef MINUNIT_H
 #define MINUNIT_H
 
+#define JAKAS_DUZA_LICZBA 213769
+
 #define mu_assert(message, test)                                               \
   do {                                                                         \
     if (!(test))                                                               \
@@ -15,7 +17,7 @@
     tests_run++;                                                               \
     if (message)                                                               \
       return message;                                                          \
-  } while (0)
+  } while (tests_run < JAKAS_DUZA_LICZBA)
 
 extern int tests_run;
 

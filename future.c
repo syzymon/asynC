@@ -54,6 +54,9 @@ int future_init(future_t *future) {
     return 0;
 }
 
+/**
+ * Should be called only when pool mutex is acquired.
+ */
 int _async(thread_pool_t *pool, future_t *future, callable_t callable) {
     int err = 0;
 

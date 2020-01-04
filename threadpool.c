@@ -14,9 +14,7 @@ bool active_or_tasks_pending(thread_pool_t *pool) {
 void *thread_worker(void *data) {
     int err = 0;
     thread_pool_t *t = data;
-    P(&t->mutex);
     bool active = true;
-    V(&t->mutex);
 
     while (active) {
         P(&t->mutex);
@@ -49,17 +47,8 @@ void *thread_worker(void *data) {
     return (void *) 0;
 }
 
-void set_sigint_handler() {
-
-}
-
-static pthread_once_t sigint_initialized = PTHREAD_ONCE_INIT;
-
 int thread_pool_init(thread_pool_t *pool, size_t num_threads) {
     int err = 0;
-
-    if ((err = pthread_once(&sigint_initialized, set_sigint_handler)) != 0)
-        syserr(err, "signal handling error");
 
     if ((err = pthread_mutex_init(&pool->mutex, NULL)) != 0)
         syserr(err, "mutex init error");
@@ -110,7 +99,7 @@ void thread_pool_destroy(struct thread_pool *pool) {
         if ((err = pthread_join(pool->threads[i], NULL)) != 0)
             syserr(err, "join failed");
     }
-    // cleanup
+
     assert(pool->pending_maps == 0);
     free(pool->threads);
 

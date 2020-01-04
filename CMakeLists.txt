@@ -19,8 +19,6 @@ include_directories(include)
 add_library(asyncc STATIC threadpool.c future.c queue.c defer.c err.c)
 add_executable(macierz macierz.c)
 add_executable(silnia silnia.c)
-add_executable(defer1 test/defer1.c)
-add_executable(await1 test/await1.c)
 add_subdirectory(test)
 
 install(TARGETS asyncc DESTINATION .)
