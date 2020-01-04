@@ -4,7 +4,7 @@
 #define MINUNIT_H
 
 //#define JAKAS_DUZA_LICZBA 213769
-#define JAKAS_DUZA_LICZBA 2137
+#define JAKAS_DUZA_LICZBA 1
 
 #define mu_assert(message, test)                                               \
   do {                                                                         \

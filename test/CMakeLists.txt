@@ -7,10 +7,10 @@ add_executable(test_await await.c)
 add_test(test_await test_await)
 
 add_executable(test_defer1 defer1.c)
-add_test(test_defer1 test_defer1)
+#add_test(test_defer1 test_defer1)
 
 add_executable(test_await1 await1.c)
-add_test(test_await1 test_await1)
+#add_test(test_await1 test_await1)
 
 add_executable(test_antonizewierzejew test_antonizewierzejew.c)
 add_test(test_antonizewierzejew test_antonizewierzejew)
