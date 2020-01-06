@@ -48,10 +48,6 @@ void vector_erase_at(vector_t *vec, size_t idx) {
     vec->array[idx] = vec->array[--vec->size];
 }
 
-void vector_clear(vector_t *vec) {
-    vec->size = 0;
-}
-
 void vector_do_for_each(vector_t *vec, void (*action)(void *)) {
     for (size_t i = 0; i < vec->size; ++i) {
         action(vec->array[i]);

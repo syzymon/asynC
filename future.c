@@ -1,7 +1,5 @@
 #include "future.h"
 #include "threadpool.h"
-#include "defer.h"
-#include "err.h"
 
 void handle_future(void *arg, size_t argsz __attribute__((unused))) {
     int err = 0;
