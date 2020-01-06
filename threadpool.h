@@ -29,6 +29,7 @@ typedef struct thread_pool {
     queue_t *task_queue_ptr;
     pthread_t *threads;
     size_t pending_maps;
+    size_t global_index;
 } thread_pool_t;
 
 
