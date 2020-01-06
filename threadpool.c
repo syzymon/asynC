@@ -14,23 +14,18 @@ bool active_or_tasks_pending(thread_pool_t *pool) {
 void *thread_worker(void *data) {
     int err = 0;
     thread_pool_t *t = data;
-    bool active = true;
 
-    while (active) {
+    while (true) {
         P(&t->mutex);
-        if (!active_or_tasks_pending(t)) {
-            V(&t->mutex);
+        if (!active_or_tasks_pending(t))
             break;
-        }
 
         while (queue_empty(t->task_queue_ptr) &&
                (t->active == true || t->pending_maps > 0))
             WAIT(&t->wait_for_job, &t->mutex);
 
-        if (!active_or_tasks_pending(t)) {
-            V(&t->mutex);
+        if (!active_or_tasks_pending(t))
             break;
-        }
 
         runnable_t job = queue_poll(t->task_queue_ptr);
         V(&t->mutex);
@@ -38,12 +33,14 @@ void *thread_worker(void *data) {
         job.function(job.arg, job.argsz);
 
         P(&t->mutex);
-        active = active_or_tasks_pending(t);
-        if (!active)
-            if ((err = pthread_cond_broadcast(&t->wait_for_job)) != 0)
-                syserr(err, "broadcast failed");
+
+        if (!active_or_tasks_pending(t))
+            break;
         V(&t->mutex);
     }
+    if ((err = pthread_cond_broadcast(&t->wait_for_job)) != 0)
+        syserr(err, "broadcast failed");
+    V(&t->mutex);
     return (void *) 0;
 }
 
