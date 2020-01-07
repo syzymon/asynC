@@ -49,4 +49,5 @@ int main(void) {
         result *= *(uint64_t *) await(&futures[i]);
     }
     printf("%lu\n", result);
+    thread_pool_destroy(&tp);
 }
