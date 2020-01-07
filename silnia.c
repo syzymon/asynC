@@ -48,5 +48,5 @@ int main(void) {
     for(int64_t i = n - 1; i >= 0 && i >= (int64_t)(n - N_THREADS); --i) {
         result *= *(uint64_t *) await(&futures[i]);
     }
-    printf("%lu", result);
+    printf("%lu\n", result);
 }
