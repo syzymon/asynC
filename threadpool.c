@@ -5,6 +5,119 @@
 #include "threadpool.h"
 #include "vector.h"
 
+/*** STATIC INITIALIZATION AND STATE MANAGEMENT ***/
+static vector_t *all_active_pools() {
+    static bool initialized = false;
+    static vector_t active_pools;
+    if (!initialized) {
+        vector_init(&active_pools);
+        initialized = true;
+    }
+    return &active_pools;
+}
+
+int record_new_pool(thread_pool_t *tp) {
+    vector_t *vec = all_active_pools();
+    tp->global_index = vector_size(vec);
+    return vector_push_back(vec, tp);
+}
+
+void erase_inactive_pool(thread_pool_t *tp) {
+    vector_t *vec = all_active_pools();
+    size_t index_of_erase = tp->global_index;
+    vector_erase_at(vec, index_of_erase);
+    size_t sz = vector_size(vec);
+    if (index_of_erase < sz) {
+        thread_pool_t *to_update = vector_at(vec, index_of_erase);
+        to_update->global_index = index_of_erase;
+    }
+}
+
+static void mask_add_sigint(sigset_t *mask_ptr) {
+    sigemptyset(mask_ptr);
+    sigaddset(mask_ptr, SIGINT);
+}
+
+static pthread_t *get_sighandler_thread_ptr() {
+    static pthread_t thread = 0;
+    return &thread;
+}
+
+void thread_pool_set_inactive(thread_pool_t *pool) {
+    pool->active = false;
+}
+
+void *signal_handler(void *data __attribute__((unused))) {
+    int err = 0;
+    sigset_t mask;
+    mask_add_sigint(&mask);
+    int sig;
+    while (true) {
+        if ((err = sigwait(&mask, &sig)) != 0)
+            syserr(err, "signal waiting fail");
+        puts("GOT SIGNAL!!!!!!!");
+
+        vector_do_for_each(all_active_pools(),
+                           (void (*)(void *)) thread_pool_destroy);
+        puts("DONE");
+    }
+}
+
+static void sigint_handler(int no __attribute__((unused))) {
+    vector_do_for_each(all_active_pools(),
+                       (void (*)(void *)) thread_pool_set_inactive);
+    pthread_kill(*get_sighandler_thread_ptr(), SIGINT);
+}
+
+void init_sighandler() {
+    int err = 0;
+    sigset_t mask;
+    mask_add_sigint(&mask);
+
+    if ((err = sigaction(SIGINT, &(struct sigaction) {
+            .sa_handler=sigint_handler,
+            .sa_mask=mask,
+            .sa_flags=0
+    }, NULL)) != 0)
+        syserr(err, "sighandler init failed");
+
+    pthread_attr_t attr;
+    if ((err = pthread_attr_init(&attr)) != 0)
+        syserr(err, "attr_init failed");
+    if ((err = pthread_attr_setdetachstate(
+            &attr,
+            PTHREAD_CREATE_JOINABLE)) != 0)
+        syserr(err, "attr_setdetachstate failed");
+
+    pthread_t *handler_thread_ptr = get_sighandler_thread_ptr();
+    if ((err = pthread_create(handler_thread_ptr,
+                              &attr,
+                              signal_handler,
+                              NULL)))
+        syserr(err, "pthread create failed");
+}
+
+__attribute__((constructor))
+static void before_main() {
+    init_sighandler();
+    all_active_pools(); // initialize vector with pools
+}
+
+__attribute__((destructor))
+static void after_main() {
+    puts("ATTR");
+    int err = 0;
+    if ((err = pthread_cancel(*get_sighandler_thread_ptr()) != 0))
+        syserr(err, "pthread cancel failed");
+    if ((err = pthread_join(
+            *get_sighandler_thread_ptr(), NULL) != 0))
+        syserr(err, "pthread join failed");
+    vector_t *v = all_active_pools();
+    vector_empty_destroy(v);
+}
+/*** END STATIC INITIALIZATION ***/
+
+/*** TASK QUEUE ***/
 void queue_init(queue_t *q) {
     q->head = q->tail = NULL;
 }
@@ -43,95 +156,9 @@ runnable_t queue_poll(queue_t *queue) {
         queue->tail = NULL;
     return popped;
 }
+/*** END TASK QUEUE ***/
 
-
-static vector_t *all_active_pools() {
-    static bool initialized = false;
-    static vector_t active_pools;
-    if (!initialized) {
-        vector_init(&active_pools);
-        initialized = true;
-    }
-    return &active_pools;
-}
-
-int record_new_pool(thread_pool_t *tp) {
-    vector_t *vec = all_active_pools();
-    tp->global_index = vector_size(vec);
-    return vector_push_back(vec, tp);
-}
-
-void erase_inactive_pool(thread_pool_t *tp) {
-    vector_t *vec = all_active_pools();
-    size_t index_of_erase = tp->global_index;
-    vector_erase_at(vec, index_of_erase);
-    size_t sz = vector_size(vec);
-    if (index_of_erase < sz) {
-        thread_pool_t *to_update = vector_at(vec, index_of_erase);
-        to_update->global_index = index_of_erase;
-    }
-}
-
-static void destroy_after_sigint(thread_pool_t *pool) {
-    int err = 0;
-    pool->active = false;
-    if ((err = pthread_cond_broadcast(&pool->wait_for_job)))
-        syserr(err, "broadcast failed");
-    erase_inactive_pool(pool);
-
-    for (size_t i = 0; i < pool->num_threads; ++i) {
-        if ((err = pthread_join(pool->threads[i], NULL)) != 0)
-            syserr(err, "join failed");
-    }
-
-    assert(pool->pending_maps == 0);
-    free(pool->threads);
-
-    if ((err = pthread_mutex_destroy(&pool->mutex)))
-        syserr(err, "mutex destroy failed");
-    if ((err = pthread_cond_destroy(&pool->wait_for_job)))
-        syserr(err, "cond destroy failed");
-
-    queue_destroy(pool->task_queue_ptr);
-    free(pool->task_queue_ptr);
-}
-
-
-static void handle_sigint(int no __attribute__((unused))) {
-    vector_do_for_each(all_active_pools(),
-                       (void (*)(void *)) destroy_after_sigint);
-}
-
-void mask_block_sigint(sigset_t *mask_ptr) {
-    sigemptyset(mask_ptr);
-    sigaddset(mask_ptr, SIGINT);
-}
-
-void init_sighandler() {
-    int err = 0;
-    sigset_t mask;
-    mask_block_sigint(&mask);
-
-    if ((err = sigaction(SIGINT, &(struct sigaction) {
-            .sa_handler=handle_sigint,
-            .sa_mask=mask,
-            .sa_flags=0
-    }, NULL)) != 0)
-        syserr(err, "sighandler init failed");
-}
-
-__attribute__((constructor))
-static void before_main() {
-    init_sighandler();
-    all_active_pools(); // initialize vector with pools
-}
-
-__attribute__((destructor))
-static void after_main() {
-    vector_t *v = all_active_pools();
-    vector_empty_destroy(v);
-}
-
+/*** THREADPOOL IMPLEMENTATION ***/
 bool active_or_tasks_pending(thread_pool_t *pool) {
     return pool->active || !queue_empty(pool->task_queue_ptr) ||
            pool->pending_maps > 0;
@@ -140,7 +167,7 @@ bool active_or_tasks_pending(thread_pool_t *pool) {
 void *thread_worker(void *data) {
     int err = 0;
     sigset_t mask;
-    mask_block_sigint(&mask);
+    mask_add_sigint(&mask);
     if ((err = pthread_sigmask(SIG_BLOCK, &mask, NULL)))
         syserr(err, "sigmask error");
 
@@ -217,13 +244,14 @@ int thread_pool_init(thread_pool_t *pool, size_t num_threads) {
 
 void thread_pool_destroy(thread_pool_t *pool) {
     int err = 0;
+
     P(&pool->mutex);
     pool->active = false;
     if ((err = pthread_cond_broadcast(&pool->wait_for_job)))
         syserr(err, "broadcast failed");
     erase_inactive_pool(pool);
     V(&pool->mutex);
-
+    puts("JOINING");
     for (size_t i = 0; i < pool->num_threads; ++i) {
         if ((err = pthread_join(pool->threads[i], NULL)) != 0)
             syserr(err, "join failed");
@@ -264,3 +292,5 @@ int defer(struct thread_pool *pool, runnable_t runnable) {
     V(&pool->mutex);
     return err;
 }
+
+/*** END THREADPOOL ***/
